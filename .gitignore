@@ -5,3 +5,19 @@ __pycache__/
 .build-test-*/
 .verification-*/
 verification-*/
+
+.env
+*.pem
+*.key
+*.p12
+
+# Keep staged private inputs out of Git; retain the bundled examples.
+/prepare-claude-agent/fixtures/claude-agents/*
+!/prepare-claude-agent/fixtures/claude-agents/client-test-author.md
+!/prepare-claude-agent/fixtures/claude-agents/fable-alias.md
+!/prepare-claude-agent/fixtures/claude-agents/haiku-alias.md
+!/prepare-claude-agent/fixtures/claude-agents/opus-alias.md
+!/prepare-claude-agent/fixtures/claude-agents/opus-pinned.md
+!/prepare-claude-agent/fixtures/claude-agents/smc-scanner.md
+!/prepare-claude-agent/fixtures/claude-agents/sonnet-alias.md
+!/prepare-claude-agent/fixtures/claude-agents/sonnet-pinned.md
