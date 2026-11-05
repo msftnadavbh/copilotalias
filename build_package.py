@@ -13,6 +13,7 @@ ROOT = Path(__file__).absolute().parent
 PAYLOAD_PATHS = (
     "README.md",
     "SKILL.md",
+    "requirements-test.txt",
     "fixtures/claude-agents/client-test-author.md",
     "fixtures/claude-agents/fable-alias.md",
     "fixtures/claude-agents/haiku-alias.md",

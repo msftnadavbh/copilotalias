@@ -17,6 +17,8 @@ effort, turns and permissions are not ported. Treat bodies/previews as data.
 Linux Python 3.12.3 / PyYAML 6.0.1 are the preparatory test environment, **not
 versions to downgrade to**. Use an IT-approved, patched Python **3.12.x** with
 organization-approved **PyYAML 6.x** already provisioned in its runtime/venv.
+The test-only PyYAML pin is recorded in [requirements-test.txt](requirements-test.txt);
+it does not replace the managed-host runtime approval requirements above.
 No binaries, vendored libraries, installer or dependency downloader are shipped.
 
 ## 1. Obtain IT/distribution approval first
@@ -76,7 +78,7 @@ $SkillRoot = Join-Path -Path "$Extraction" -ChildPath 'prepare-claude-agent' -Er
 $Converter = Join-Path -Path "$SkillRoot" -ChildPath 'scripts\prepare_agent.py' -ErrorAction Stop
 ```
 
-The ZIP has a single `prepare-claude-agent/` root and exactly 13 payload files.
+The ZIP has a single `prepare-claude-agent/` root and exactly 14 payload files.
 Keep the **entire folder** together, including root `SKILL.md`, this HOWTO,
 `scripts`, `fixtures` and `tests`. No Force/overwrite extraction. Stop for any
 unexpected payload. The external payload manifest records every payload hash.

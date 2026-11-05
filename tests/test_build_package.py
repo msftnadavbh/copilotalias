@@ -18,6 +18,7 @@ SPEC = importlib.util.spec_from_file_location("package_builder_tests", ROOT / "b
 BUILDER = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(BUILDER)
 EXPECTED = {
+    "requirements-test.txt",
     "README.md", "SKILL.md", "scripts/prepare_agent.py", "tests/test_prepare_agent.py", "tests/model_cases.json",
     "fixtures/claude-agents/client-test-author.md", "fixtures/claude-agents/fable-alias.md",
     "fixtures/claude-agents/haiku-alias.md", "fixtures/claude-agents/opus-alias.md",

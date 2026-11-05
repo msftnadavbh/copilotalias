@@ -104,3 +104,26 @@ Native Windows Python, WDAC/AppLocker/CLM behavior and live Copilot/VS Code skil
 loading or model execution are **not verified**. Empty-tool and model-policy
 enforcement are not proven by a preview. This is not a Windows or live-agent
 certification.
+
+## Maintainers
+
+The test-only dependency pin is in
+[requirements-test.txt](prepare-claude-agent/requirements-test.txt).
+Managed Windows hosts must continue using an already-approved runtime as
+explained in the [Windows guide](prepare-claude-agent/README.md).
+
+Run from the repository root:
+
+```sh
+python3 -I -B -X utf8 -m unittest discover -s tests -v
+python3 -I -B -X utf8 -m unittest discover -s prepare-claude-agent/tests -v
+python3 build_package.py   # rebuilds prepare-claude-agent.zip and sha256 manifests
+```
+
+Rebuild only when the packaged payload changes. Rebuilding changes the ZIP and
+checksum files; commit `prepare-claude-agent.zip`,
+`prepare-claude-agent.zip.sha256` and `payload-manifest.sha256` together.
+
+## License
+
+[MIT](LICENSE) — Copyright (c) 2026 Nadav Ben Haim.
