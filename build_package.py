@@ -11,6 +11,7 @@ import zipfile
 
 ROOT = Path(__file__).absolute().parent
 PAYLOAD_PATHS = (
+    "LICENSE",
     "README.md",
     "SKILL.md",
     "requirements-test.txt",

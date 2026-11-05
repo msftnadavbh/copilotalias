@@ -78,7 +78,7 @@ $SkillRoot = Join-Path -Path "$Extraction" -ChildPath 'prepare-claude-agent' -Er
 $Converter = Join-Path -Path "$SkillRoot" -ChildPath 'scripts\prepare_agent.py' -ErrorAction Stop
 ```
 
-The ZIP has a single `prepare-claude-agent/` root and exactly 14 payload files.
+The ZIP has a single `prepare-claude-agent/` root and exactly 15 payload files.
 Keep the **entire folder** together, including root `SKILL.md`, this HOWTO,
 `scripts`, `fixtures` and `tests`. No Force/overwrite extraction. Stop for any
 unexpected payload. The external payload manifest records every payload hash.
