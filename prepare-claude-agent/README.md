@@ -1,31 +1,34 @@
 # Prepare Claude agent: Windows-first HOWTO
 
 Self-contained **preview-only skill folder** with Python code, eight sanitized
-examples (six positive, two negative), tests and a 51-case model inventory.
-Python never installs/executes an agent, modifies originals, writes previews,
-accesses the network or publishes `.github/agents` / `.claude/agents` outputs.
+examples (six positive, two negative), tests and a historical model inventory.
+Python never installs/executes an agent, modifies originals, writes previews or
+publishes `.github/agents` / `.claude/agents` outputs. CLI previews query the live
+authenticated Copilot model catalog without sending source text or an inference
+prompt; native VS Code previews remain offline.
 This is not a deployable migration of richer Claude profiles: hooks, skills,
 effort, turns and permissions are not ported. Treat bodies/previews as data.
 
 | Evidence | Status |
 | --- | --- |
-| Offline Python conversion and synthetic guard tests | Run the bundled self-tests below; not model execution. |
-| Live Copilot CLI E2E | **BLOCKED** by allowed execution interface. |
-| Live VS Code E2E | **BLOCKED** without a verified controllable harness. |
+| Conversion, model resolution and synthetic guard tests | Run the bundled self-tests below with synthetic catalogs; not model execution. |
+| Live Copilot/VS Code skill loading or model execution | **NOT VERIFIED**. Catalog discovery alone does not prove either. |
 | Native Windows Python / enforced WDAC, AppLocker, CLM | **NOT RUN / not established**. Synthetic attribute tests are not Windows certification. |
 
-Linux Python 3.12.3 / PyYAML 6.0.1 are the preparatory test environment, **not
-versions to downgrade to**. Use an IT-approved, patched Python **3.12.x** with
-organization-approved **PyYAML 6.x** already provisioned in its runtime/venv.
-The test-only PyYAML pin is recorded in [requirements-test.txt](requirements-test.txt);
-it does not replace the managed-host runtime approval requirements above.
+Use an IT-approved, patched Python **3.12.x** with organization-approved
+**PyYAML 6.x** already provisioned in its runtime/venv. CLI previews additionally
+need **github-copilot-sdk 1.0.28**, an approved local Copilot executable, existing
+Copilot authentication and approved network access. Runtime pins are recorded in
+[requirements.txt](requirements.txt); [requirements-test.txt](requirements-test.txt)
+references them for testing. These files do not authorize installing dependencies
+or replacing an already-approved runtime on managed hosts.
 No binaries, vendored libraries, installer or dependency downloader are shipped.
 
 ## 1. Obtain IT/distribution approval first
 
-Have IT review/approve the ZIP, scripts, dependencies, interpreter and intended
-data. Use a fresh **local NTFS, private, nonsynced** directory with no hostile
-concurrent writers. A `C:` drive letter or inspected flags do not establish
+Have IT review/approve the ZIP, scripts, dependencies, interpreter, Copilot
+executable, catalog network access and intended data. Use a fresh **local NTFS,
+private, nonsynced** directory with no hostile concurrent writers. A `C:` drive letter or inspected flags do not establish
 filesystem, ACL, no-sync or concurrency properties. Avoid OneDrive, junctions,
 reparse-backed storage, network shares, UNC/device and drive-relative paths.
 Python checks symlinks, junctions and exposed reparse flags root-to-leaf with
@@ -78,7 +81,7 @@ $SkillRoot = Join-Path -Path "$Extraction" -ChildPath 'prepare-claude-agent' -Er
 $Converter = Join-Path -Path "$SkillRoot" -ChildPath 'scripts\prepare_agent.py' -ErrorAction Stop
 ```
 
-The ZIP has a single `prepare-claude-agent/` root and exactly 15 payload files.
+The ZIP has a single `prepare-claude-agent/` root and exactly 19 payload files.
 Keep the **entire folder** together, including root `SKILL.md`, this HOWTO,
 `scripts`, `fixtures` and `tests`. No Force/overwrite extraction. Stop for any
 unexpected payload. The external payload manifest records every payload hash.
@@ -102,7 +105,8 @@ workflow; native PowerShell protocol validation is not established by Linux test
 
 ```powershell
 $Python = 'C:\Approved Runtime\python.exe'
-if ($Python -notmatch '\A[A-Za-z]:[\\/]' -or $SkillRoot -notmatch '\A[A-Za-z]:[\\/]') { throw 'Require approved absolute local paths' }
+$Copilot = 'C:\Approved Copilot\copilot.exe' # needed only for CLI previews
+if ($Python -notmatch '\A[A-Za-z]:[\\/]' -or $Copilot -notmatch '\A[A-Za-z]:[\\/]' -or $SkillRoot -notmatch '\A[A-Za-z]:[\\/]') { throw 'Require approved absolute local paths' }
 if (-not (Test-Path -LiteralPath "$Python" -PathType Leaf -ErrorAction Stop)) { throw 'Approved interpreter unavailable; contact IT' }
 $global:LASTEXITCODE = $null
 & "$Python" '-I' '-B' '-X' 'utf8' '-c' "import sys,yaml; print(sys.version); print('PyYAML',yaml.__version__); assert sys.version_info[:2] == (3,12); assert yaml.__version__.split('.')[0] == '6'"
@@ -113,10 +117,11 @@ $global:LASTEXITCODE = $null
 if ($null -eq $global:LASTEXITCODE -or $global:LASTEXITCODE -ne 0) { throw 'Self-tests failed or did not start; stop' }
 ```
 
-Tests keep scratch data under the skill folder and clean it. They run actual
-converter subprocesses with **their own explicit** `-I -B -X utf8` flags (parent
-flags are not inherited). Link tests can skip only when OS privileges/filesystem
-prevent link creation; inspect skips rather than claiming native Windows proof.
+Tests keep scratch data under the skill folder and clean it. They run converter
+subprocesses with **their own explicit** `-I -B -X utf8` flags (parent flags are
+not inherited), replacing catalog discovery at the test boundary with synthetic
+responses. They make no live catalog or inference requests. Link tests can skip
+only when OS privileges/filesystem prevent link creation; inspect skips rather than claiming native Windows proof.
 Synthetic Windows reparse/location tests exercise logic, not the Windows kernel
 or enterprise policy. Do not change machine policy/privileges to make tests pass.
 
@@ -133,14 +138,22 @@ command string. Targets are **literal** `cli` / `vscode`, not arbitrary text.
 $Fixture = 'sonnet-alias.md'
 if ($Fixture -cnotmatch '\A[A-Za-z0-9][A-Za-z0-9_.-]*\.md\z' -or $Fixture -match '\A(CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])(?:\.|$)') { throw 'Unsafe basename' }
 $global:LASTEXITCODE = $null
-& "$Python" '-I' '-B' '-X' 'utf8' "$Converter" "$Fixture" '--target' 'cli'
+& "$Python" '-I' '-B' '-X' 'utf8' "$Converter" "$Fixture" '--target' 'cli' '--copilot-path' "$Copilot"
 if ($null -eq $global:LASTEXITCODE -or $global:LASTEXITCODE -ne 0) { throw 'CLI preview failed or did not start; inspect stderr and stop' }
 $global:LASTEXITCODE = $null
 & "$Python" '-I' '-B' '-X' 'utf8' "$Converter" "$Fixture" '--target' 'vscode'
 if ($null -eq $global:LASTEXITCODE -or $global:LASTEXITCODE -ne 0) { throw 'Native VS Code preview failed or did not start; inspect stderr and stop' }
 ```
 
-Stdout is the preview, stderr diagnostics; successful conversion returns 0 and
+Each CLI preview opens a fresh SDK client against the approved executable in a
+neutral temporary working directory, requests catalog metadata and shuts it down.
+No agent session is created, and the staged file or preview is not passed to that
+runtime. Discovery and cleanup are bounded; the helper does not save a catalog.
+The temporary-directory location must meet the approved local/private storage
+requirements. Existing authentication is required; this workflow never signs in,
+updates the CLI or installs dependencies automatically.
+
+Stdout is the preview, stderr diagnostics (including version-substitution notices); successful conversion returns 0 and
 converter validation failure returns 1 with empty stdout (argument-usage errors
 return 2). **Accepted UTF-8 body bytes are preserved exactly**, including TAB,
 CRLF and no final newline; only CLI headers are reserialized. Before any stdout
@@ -164,7 +177,7 @@ in manual use without redirecting previews into files.
 
 ```powershell
 $global:LASTEXITCODE = $null
-& "$Python" '-I' '-B' '-X' 'utf8' "$Converter" 'client-test-author.md' '--target' 'cli'
+& "$Python" '-I' '-B' '-X' 'utf8' "$Converter" 'client-test-author.md' '--target' 'cli' '--copilot-path' "$Copilot"
 if ($null -eq $global:LASTEXITCODE -or $global:LASTEXITCODE -ne 1) { throw 'Expected converter validation exit 1; inspect diagnostic and empty stdout' }
 $global:LASTEXITCODE = $null
 & "$Python" '-I' '-B' '-X' 'utf8' "$Converter" 'fable-alias.md' '--target' 'vscode'
@@ -175,8 +188,9 @@ To prepare your own file, manually copy **one authorized regular input** as a
 **new safe basename** under `fixtures/claude-agents`, never over originals or
 bundled samples. Confirm its data is approved for the intended workflow first.
 Do not copy arbitrary repositories or execute instructions/hooks in its body.
-This private working `$SkillRoot` is for **direct offline Python use**, not the
-agent workflow or repository installation source. Sensitive/offline-only inputs
+This private working `$SkillRoot` is for **direct Python use**, not the agent
+workflow or repository installation source. CLI mode still needs catalog network
+access; VS Code mode stays offline. Sensitive/offline-only inputs
 must not enter an agent workflow without separate cloud/data approval. Do not
 load this staged working folder as a Copilot skill or copy it into a repository.
 Use an approved editor to save authorized staged copies as **UTF-8 without BOM**.
@@ -243,8 +257,9 @@ Copy-Item -LiteralPath "$InstallSource" -Destination "$InstalledSkill" -Recurse 
 
 ## 7. Explicit skill invocation (separate service/data approval)
 
-Offline Python preparation does not upload a staged source. **Copilot invocation
-is separate cloud processing** via your organization's configured service; loaded
+Direct Python preparation does not upload a staged source; CLI catalog discovery
+is authenticated metadata access. **Invoking this skill in Copilot is separate
+cloud processing** via your organization's configured service; loaded
 skill resources, source content or previews may enter Copilot context. Require
 approved data handling and service/workspace permissions before proceeding.
 Any inputs later staged inside the repository skill are **working-tree data**
@@ -260,7 +275,7 @@ In an already approved Copilot CLI session for that repository:
 /skills reload
 /skills list
 /skills info prepare-claude-agent
-/prepare-claude-agent Preview source basename sonnet-alias.md, target cli, approved Python C:\Approved Runtime\python.exe. Preview only; do not launch or publish an agent.
+/prepare-claude-agent Preview source basename sonnet-alias.md, target cli, approved Python C:\Approved Runtime\python.exe, approved Copilot C:\Approved Copilot\copilot.exe. Preview only; do not launch or publish an agent.
 ```
 
 For VS Code, use the approved workspace and installed Copilot skill discovery
@@ -277,12 +292,16 @@ flag enforcement, target parsing and target model/tool behavior are unverified.
 
 ## 8. Troubleshooting and removal
 
+* Catalog/authentication/timeout failure: stop; there is no static fallback. Have
+  IT verify the approved SDK/runtime, account access and network policy. A missing,
+  disabled or unknown-policy model is not eligible; never substitute another family.
 * Import/runtime/policy failure: stop IT; do not remove isolation flags, add
   PYTHONPATH, fetch dependencies, unblock files or change security policy.
 * Path/reparse/hardlink refusal: ask IT for compliant private local NTFS storage
   and a fresh authorized regular copy; do not use network/UNC runtime workarounds.
 * Oversize: 1 MiB is the input cap, enforced with a bounded read, not only stat
-  size. No truncation. Unsupported header/model: refuse, never silently normalize.
+  size. No truncation. Unsupported header/model: refuse. Numeric version
+  substitutions are explicit stderr notices, never silent normalization.
 * UTF-8/BOM/control/name refusal: use an approved editor on an authorized staged
   copy, not the original. No automatic encoding, BOM, control or name rewriting.
 * Skill missing: verify the entire folder, resource location and enterprise
@@ -294,53 +313,51 @@ folder**, never `.github/skills`, `.github`, the repository or global
 directories. This guide provides no automated deletion routine. Then reload
 skills in the approved application. No parent/global removal.
 
-## Model selection compatibility snapshot: 2026-11-04
+## Live model selection
 
-The finite [inventory](tests/model_cases.json) contains 51 unique documented
-selectors/IDs/representative provider forms, each tested for both targets:
-**CLI 22 mapped / 29 expected rejections; native VS Code 4 passthrough / 47
-expected rejections**. Rejection passes are not successful translations. This
-is not Anthropic's internal test suite, all arbitrary/retired model names or live
-inference. General Code selectors are tested for portability, not asserted valid
-in every subagent header. Source URLs, categories, overlaps and as-of metadata
-are preserved in the inventory; tests do not generate expectations from code.
+Every CLI invocation fetches the authenticated catalog anew. Only catalog entries
+with policy `enabled` can be selected. Missing or unknown policy, disabled models,
+empty/invalid catalogs and authentication/discovery failures do not fall back to
+old data. The helper sends no prompt and does not test model inference. Catalog
+presence is evidence at lookup time, not a guarantee of later availability.
 
-| CLI input | Candidate |
+| CLI input | Selection rule |
 | --- | --- |
-| `sonnet`, `claude-sonnet-5-5`, `claude-sonnet-5.5` | `claude-sonnet-5.5` |
-| `opus`, `claude-opus-5-5`, `claude-opus-5.5` | `claude-opus-5.5` |
-| `haiku`, `claude-haiku-5-5`, `claude-haiku-5.5` | `claude-haiku-5.5` |
-| `fable`, `claude-fable-5-1`, `claude-fable-5.1` | `claude-fable-5.1` |
-| `claude-sonnet-5`, `claude-fable-5`, `claude-opus-5` | Same exact ID |
-| `claude-opus-4-8`, `claude-opus-4.8` | `claude-opus-4.8` |
-| `claude-sonnet-4-6`, `claude-sonnet-4.6` | `claude-sonnet-4.6` |
-| `claude-haiku-4-5`, `claude-haiku-4.5` | `claude-haiku-4.5` |
-| `claude-opus-4.8-fast` | Same exact Copilot ID; no hyphenated API fast spelling |
+| Family alias such as `sonnet`, `opus`, `haiku` or `fable` | Latest available standard numeric model in that family |
+| Ordinary numeric ID such as `claude-sonnet-5-5` or `claude-sonnet-5.5` | Same version if available; dotted/hyphenated numeric spellings are equivalent |
+| Numeric version missing from the eligible catalog | Closest version in the same family: prefer the same major, then nearest major/minor, with newer versions breaking ties |
+| Exact special catalog ID, such as a `-fast` variant | Preserve the exact ID when eligible; never remove its suffix to find a substitute |
 
-These are project pins, **not** Claude account/environment/provider/parent-state
-emulation. Fable's pin 5.1 differs from Claude apps gateway 5.0. Native VS Code
-preserves only `sonnet`, `opus`, `haiku`, `inherit` unchanged, not `.agent.md`
-display-name translation; inherit preserves intent, not original parent identity
-or CLI pin equivalence. CLI rejects inherit; VS Code rejects Fable/explicit IDs.
-Dynamic `default`/`best`/`opusplan`, every `[1m]` selector, dated IDs, unsupported
-versions and provider-specific spellings (Bedrock `anthropic.` prefixes, Vertex
-`@date`, ARNs, custom deployment/gateway names) reject. Never strip suffixes even
-when redundant in Claude. IDs copied from a provider but spelled exactly like
-an allowlisted API ID follow that ID's CLI mapping: provider origin/configuration
-is neither detected nor reproduced. Native VS Code still rejects explicit IDs.
+Selection uses numeric ordering, so version `5.10` sorts after `5.9`. The
+resolver reports a requested-version substitution on stderr with both IDs.
+A same-family replacement can be newer or older; it does not promise identical
+model capabilities. No match in that family, ambiguous matching, or unavailable
+special semantics must stop the preview. Context/date/provider parts are never
+stripped. Dynamic selectors (`default`, `best`, `opusplan`, `inherit`) do not
+become family aliases or a guessed parent model.
 
-Advertised catalog: lead-reported CLI 1.0.105 completion snapshot from
-`copilot --no-auto-update completion bash`, 2026-11-04: **not** account
-availability, parser, dispatch, context-window or enforcement evidence.
-`model-policy: required`, `strict-tools-list: true`, `tools: []` remain unverified
-intent. No target isolation field. Lead-reported installed Claude 2.1.284 is older
-than Haiku 5.5's documented minimum 2.1.293; no Claude update or actual run here.
+Copilot's catalog is authoritative. The tool does not inspect the source Claude
+environment, account, provider or parent session. A bare alias means the latest
+eligible Copilot family member, not necessarily Claude's current selection.
+Native VS Code mode remains unchanged: only `sonnet`, `opus`, `haiku`, `inherit`
+pass through byte-for-byte; Fable and explicit IDs reject. There is no `.agent.md`
+display-name translation. Inherit preserves intent, not original parent identity.
+Candidate `model-policy: required`, `strict-tools-list: true`, `tools: []` remain
+unverified runtime intent; the preview does not prove target enforcement.
+
+The finite [inventory](tests/model_cases.json) retains historical source references
+and representative inputs for deterministic tests. Synthetic catalogs exercise
+new versions, removals, exact/nearest matching and discovery failures. That test
+data is never used as the production catalog and is not evidence of today's
+account availability. Tests cover a finite input set, not all possible provider
+names or live inference.
 
 ## Official references
 
+* [GitHub Copilot Python SDK and model discovery](https://github.com/github/copilot-sdk/tree/main/python)
 * [GitHub: adding CLI skills and relative resources](https://docs.github.com/en/copilot/how-tos/copilot-cli/customize-copilot/add-skills)
 * [VS Code skills/manual invocation](https://code.visualstudio.com/docs/copilot/customization/agent-skills)
 * [Python command-line isolation and flags](https://docs.python.org/3.12/using/cmdline.html), [stat attributes](https://docs.python.org/3.12/library/stat.html), [lstat](https://docs.python.org/3.12/library/os.html#os.lstat)
 * [PowerShell Get-FileHash](https://learn.microsoft.com/en-us/powershell/module/microsoft.powershell.utility/get-filehash?view=powershell-5.1), [Expand-Archive](https://learn.microsoft.com/en-us/powershell/module/microsoft.powershell.archive/expand-archive?view=powershell-5.1), [call operator](https://learn.microsoft.com/en-us/powershell/module/microsoft.powershell.core/about/about_operators?view=powershell-5.1), [LASTEXITCODE](https://learn.microsoft.com/en-us/powershell/module/microsoft.powershell.core/about/about_automatic_variables?view=powershell-5.1)
 * [Application control and PowerShell](https://learn.microsoft.com/en-us/powershell/scripting/security/app-control/how-app-control-works?view=powershell-7.5) (policy behavior is version/environment dependent, not tested here)
-* Model-selection/API/catalog/provider/VS Code model URLs are embedded in the unchanged [source-backed inventory](tests/model_cases.json).
+* Model-selection/API/catalog/provider/VS Code model URLs are retained in the historical [source-backed inventory](tests/model_cases.json).

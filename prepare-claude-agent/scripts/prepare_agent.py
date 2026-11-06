@@ -3,6 +3,7 @@
 import argparse
 from pathlib import Path, PureWindowsPath
 import re
+import runpy
 import stat
 import sys
 
@@ -13,30 +14,45 @@ from yaml.tokens import AliasToken, AnchorToken, TagToken
 ROOT = Path(__file__).absolute().parent.parent
 FIXTURES = ROOT / "fixtures" / "claude-agents"
 MAX_INPUT_BYTES = 1024 * 1024
-CLI_MODELS = {
-    "sonnet": "claude-sonnet-5.5",
-    "opus": "claude-opus-5.5",
-    "haiku": "claude-haiku-5.5",
-    "fable": "claude-fable-5.1",
-    "claude-sonnet-5-5": "claude-sonnet-5.5",
-    "claude-sonnet-5": "claude-sonnet-5",
-    "claude-fable-5-1": "claude-fable-5.1",
-    "claude-fable-5": "claude-fable-5",
-    "claude-opus-5-5": "claude-opus-5.5",
-    "claude-opus-5": "claude-opus-5",
-    "claude-opus-4-8": "claude-opus-4.8",
-    "claude-sonnet-4-6": "claude-sonnet-4.6",
-    "claude-haiku-5-5": "claude-haiku-5.5",
-    "claude-haiku-4-5": "claude-haiku-4.5",
-    "claude-sonnet-5.5": "claude-sonnet-5.5",
-    "claude-fable-5.1": "claude-fable-5.1",
-    "claude-opus-5.5": "claude-opus-5.5",
-    "claude-opus-4.8": "claude-opus-4.8",
-    "claude-opus-4.8-fast": "claude-opus-4.8-fast",
-    "claude-sonnet-4.6": "claude-sonnet-4.6",
-    "claude-haiku-5.5": "claude-haiku-5.5",
-    "claude-haiku-4.5": "claude-haiku-4.5",
-}
+# Only plain numeric releases participate in latest/nearest selection.
+MODEL_VERSION = re.compile(r"claude-([a-z]+)-([1-9][0-9]{0,2})(?:[.-](0|[1-9][0-9]{0,2}))?")
+
+
+def discover_models(copilot_path):
+    helper = ROOT / "scripts" / "copilot_catalog.py"
+    checked_stat(helper)
+    return runpy.run_path(str(helper))["discover_models"](copilot_path)
+
+
+def resolve_model(model, catalog):
+    """Return (catalog ID, substituted); never infer provider or variant identity."""
+    if model in {"inherit", "default", "best", "opusplan", "auto"}:
+        raise ValueError(f"unsupported CLI model {model!r}: no eligible CLI model; dynamic selectors are unsupported")
+    if model in catalog and re.fullmatch(r"claude-[a-z]+-[a-z0-9]+(?:[.-][a-z0-9]+)*", model):
+        return model, False
+    requested = MODEL_VERSION.fullmatch(model)
+    family = requested[1] if requested else model
+    candidates = {}
+    for identifier in catalog:
+        parsed = MODEL_VERSION.fullmatch(identifier)
+        if parsed and parsed[1] == family:
+            version = (int(parsed[2]), int(parsed[3] or 0))
+            if version in candidates:
+                raise ValueError(f"ambiguous CLI catalog versions for {family!r}")
+            candidates[version] = identifier
+    if not candidates or (not requested and not re.fullmatch(r"[a-z]+", model)):
+        raise ValueError(f"unsupported CLI model {model!r}: no eligible CLI model; "
+                         "provider, context and variant semantics are not stripped")
+    if not requested:
+        return candidates[max(candidates)], False
+    version = (int(requested[2]), int(requested[3] or 0))
+    if version in candidates:
+        return candidates[version], False
+    nearest = min(candidates, key=lambda item: (
+        abs(item[0] - version[0]), abs(item[1] - version[1]), -item[0], -item[1]
+    ))
+    return candidates[nearest], True
+
 
 
 def check_location(location):
@@ -112,7 +128,7 @@ def checked_preview(output):
     return output
 
 
-def preview(fixture, target):
+def preview(fixture, target, copilot_path=None):
     check_component(fixture)
     if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]*\.md", fixture):
         raise ValueError("choose a fixture basename, not a path")
@@ -154,32 +170,36 @@ def preview(fixture, target):
                 "only supports sonnet, opus, haiku, inherit; no selector, version or provider conversion"
             )
         return checked_preview(original)
-    if model not in CLI_MODELS:
-        raise ValueError(
-            f"unsupported CLI model {model!r}: no exact CLI mapping; dynamic/context/inherit selectors "
-            "and unlisted dated, provider or version IDs are not translated"
-        )
+    # Reject invalid output bytes before starting an authenticated metadata lookup.
+    checked_preview(original)
+    if not copilot_path:
+        raise ValueError("CLI previews require --copilot-path with an approved absolute executable path")
+    selected, substituted = resolve_model(model, discover_models(copilot_path))
     candidate = {
         "name": fields["name"],
         "description": fields["description"],
-        "model": CLI_MODELS[model],
+        "model": selected,
         "model-policy": "required",
         "strict-tools-list": True,
         "tools": [],
     }
     newline = b"\r\n" if lines[0] == b"---\r\n" else b"\n"
     emitted = yaml.safe_dump(candidate, sort_keys=False, allow_unicode=True).encode("utf-8")
-    return checked_preview(b"---" + newline + emitted.replace(b"\n", newline) + b"---" + newline + b"".join(lines[end + 1:]))
+    output = checked_preview(b"---" + newline + emitted.replace(b"\n", newline) + b"---" + newline + b"".join(lines[end + 1:]))
+    if substituted:
+        print(f"model substitution: {model!r} -> {selected!r} (closest eligible version in the same family)", file=sys.stderr)
+    return output
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("fixture", help="basename under fixtures/claude-agents (including .md)")
     parser.add_argument("--target", required=True, choices=("cli", "vscode"))
+    parser.add_argument("--copilot-path", help="approved absolute Copilot executable (required for cli)")
     args = parser.parse_args()
     try:
         check_location(sys.argv[0])
-        output = preview(args.fixture, args.target)
+        output = preview(args.fixture, args.target, args.copilot_path)
     except (OSError, UnicodeError, ValueError, yaml.YAMLError, RecursionError) as error:
         print(f"preview rejected: {error}", file=sys.stderr)
         return 1
