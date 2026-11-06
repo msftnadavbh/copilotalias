@@ -1,6 +1,8 @@
 """Read the authenticated Copilot catalog without creating an agent session."""
 
 import asyncio
+from contextlib import contextmanager
+import logging
 import os
 from pathlib import Path, PureWindowsPath
 import re
@@ -10,6 +12,26 @@ import tempfile
 
 DISCOVERY_TIMEOUT = 20
 CLEANUP_TIMEOUT = 5
+
+
+@contextmanager
+def _quiet_sdk_logging():
+    # The SDK logs raw startup exceptions before our boundary can sanitize them.
+    root = logging.getLogger("copilot")
+    loggers = [root]
+    for logger in loggers:
+        loggers.extend(logger.getChildren())
+    previous = [(logger, logger.disabled) for logger in loggers]
+    handlers, propagate = root.handlers, root.propagate
+    root.handlers, root.propagate = [logging.NullHandler()], False
+    for logger in loggers:
+        logger.disabled = True
+    try:
+        yield
+    finally:
+        root.handlers, root.propagate = handlers, propagate
+        for logger, disabled in previous:
+            logger.disabled = disabled
 
 
 def _enabled_ids(models):
@@ -74,7 +96,7 @@ def discover_models(cli_path):
     except Exception:
         raise ValueError("an approved github-copilot-sdk 1.0.28 runtime is required for CLI discovery; contact IT") from None
     try:
-        with tempfile.TemporaryDirectory(prefix="copilotalias-catalog-") as directory:
+        with _quiet_sdk_logging(), tempfile.TemporaryDirectory(prefix="copilotalias-catalog-") as directory:
             try:
                 client = CopilotClient(
                     connection=RuntimeConnection.for_stdio(path=str(path), args=(

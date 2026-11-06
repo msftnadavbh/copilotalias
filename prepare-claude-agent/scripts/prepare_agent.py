@@ -28,9 +28,9 @@ def resolve_model(model, catalog):
     """Return (catalog ID, substituted); never infer provider or variant identity."""
     if model in {"inherit", "default", "best", "opusplan", "auto"}:
         raise ValueError(f"unsupported CLI model {model!r}: no eligible CLI model; dynamic selectors are unsupported")
-    if model in catalog and re.fullmatch(r"claude-[a-z]+-[a-z0-9]+(?:[.-][a-z0-9]+)*", model):
-        return model, False
     requested = MODEL_VERSION.fullmatch(model)
+    if not requested and model in catalog and re.fullmatch(r"claude-[a-z]+-[a-z0-9]+(?:[.-][a-z0-9]+)*", model):
+        return model, False
     family = requested[1] if requested else model
     candidates = {}
     for identifier in catalog:

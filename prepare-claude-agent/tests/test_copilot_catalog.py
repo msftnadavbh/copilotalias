@@ -1,6 +1,9 @@
 """Catalog boundary tests; no real SDK, credentials, or runtime process."""
 
 import asyncio
+import contextlib
+import io
+import logging
 import importlib.util
 import os
 from pathlib import Path
@@ -136,6 +139,39 @@ class CatalogTests(unittest.TestCase):
             with self.subTest(mode=mode), mock.patch.object(CATALOG, "CLEANUP_TIMEOUT", 0.01):
                 self.assertEqual(self.discover(), ["claude-sonnet-5.5"])
             self.assertEqual(self.instances[-1].calls[-2:], ["stop", "force"])
+
+    def test_sdk_logged_startup_failure_is_suppressed_and_logging_restored(self):
+        stderr = io.StringIO()
+        logger = logging.getLogger('copilot.client')
+        handler = logging.StreamHandler(stderr)
+        before = (logger.handlers[:], logger.propagate, logger.disabled, logger.level)
+        logger.handlers = [handler]
+        logger.propagate = False
+        logger.disabled = False
+        logger.setLevel(logging.WARNING)
+
+        async def fail_start():
+            try:
+                raise RuntimeError('SECRET startup diagnostic')
+            except RuntimeError:
+                logger.warning('SDK startup failed', exc_info=True)
+                raise
+
+        try:
+            with mock.patch.object(self.sdk.CopilotClient, 'start', side_effect=fail_start), \
+                    contextlib.redirect_stderr(stderr):
+                with self.assertRaisesRegex(ValueError, 'catalog discovery failed'):
+                    self.discover()
+            self.assertEqual(stderr.getvalue(), '')
+            self.assertEqual(logger.handlers, [handler])
+            self.assertFalse(logger.propagate)
+            self.assertFalse(logger.disabled)
+            self.assertEqual(logger.level, logging.WARNING)
+            logger.warning('caller logging restored')
+            self.assertIn('caller logging restored', stderr.getvalue())
+        finally:
+            logger.handlers, logger.propagate, logger.disabled, logger.level = before
+            handler.close()
 
     def test_constructor_errors_are_sanitized(self):
         with mock.patch.object(self.sdk, "CopilotClient", side_effect=ValueError("SECRET constructor diagnostic")):

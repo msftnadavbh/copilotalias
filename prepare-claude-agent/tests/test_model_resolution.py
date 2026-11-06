@@ -61,6 +61,13 @@ class ModelResolution(unittest.TestCase):
             with self.subTest(catalog=catalog), self.assertRaises(ValueError):
                 PREPARE.resolve_model('sonnet', catalog)
 
+    def test_explicit_numeric_ids_also_reject_ambiguous_versions(self):
+        for catalog in [['claude-sonnet-5.5', 'claude-sonnet-5-5'],
+                        ['claude-sonnet-5', 'claude-sonnet-5.0']]:
+            for requested in catalog:
+                with self.subTest(requested=requested), self.assertRaisesRegex(ValueError, 'ambiguous'):
+                    PREPARE.resolve_model(requested, catalog)
+
     def test_fresh_catalog_for_each_preview(self):
         with mock.patch.object(PREPARE, 'discover_models', side_effect=[
             ['claude-sonnet-5.5'], ['claude-sonnet-6']
