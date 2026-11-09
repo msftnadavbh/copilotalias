@@ -20,6 +20,10 @@ SPEC.loader.exec_module(BUILDER)
 EXPECTED = {
     "LICENSE",
     "requirements-test.txt",
+    "requirements.txt",
+    "scripts/copilot_catalog.py",
+    "tests/test_copilot_catalog.py",
+    "tests/test_model_resolution.py",
     "README.md", "SKILL.md", "scripts/prepare_agent.py", "tests/test_prepare_agent.py", "tests/model_cases.json",
     "fixtures/claude-agents/client-test-author.md", "fixtures/claude-agents/fable-alias.md",
     "fixtures/claude-agents/haiku-alias.md", "fixtures/claude-agents/opus-alias.md",

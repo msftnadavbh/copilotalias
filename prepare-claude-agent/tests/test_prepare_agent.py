@@ -1,4 +1,4 @@
-"""Subprocess conversion E2E, not live CLI/VS Code runtime E2E."""
+"""Subprocess converter checks with a mocked catalog I/O boundary; no live agents."""
 
 import errno
 import importlib.util
@@ -25,6 +25,17 @@ VALID = b"name: synthetic\ndescription: Sanitized fixture.\nmodel: sonnet\ntools
 SPEC = importlib.util.spec_from_file_location("prepare_guard_tests", SCRIPT)
 PREPARE = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(PREPARE)
+CATALOG = json.loads((ROOT / "tests" / "model_cases.json").read_text())["test_catalog"]
+# Patch only metadata discovery in the subprocess; execute real parsing and main().
+TEST_DRIVER = """
+import json, runpy, sys
+from unittest import mock
+catalog = json.loads(sys.argv.pop(1))
+sys.argv = sys.argv[1:]
+module = runpy.run_path(sys.argv[0])
+with mock.patch.dict(module['main'].__globals__, discover_models=lambda path: catalog):
+    raise SystemExit(module['main']())
+"""
 
 
 def snapshot():
@@ -78,7 +89,8 @@ class ConversionE2E(unittest.TestCase):
         env = dict(os.environ, TMPDIR=self.scratch.name,
                    TMP=self.scratch.name, TEMP=self.scratch.name)
         result = subprocess.run(
-            [sys.executable, "-I", "-B", "-X", "utf8", str(SCRIPT), fixture, "--target", target, *extra],
+            [sys.executable, "-I", "-B", "-X", "utf8", "-c", TEST_DRIVER, json.dumps(CATALOG),
+             str(SCRIPT), fixture, "--target", target, "--copilot-path", "/approved/copilot", *extra],
             cwd=self.cwd, env=env, capture_output=True, timeout=10, shell=False,
         )
         if before is not None:
@@ -91,8 +103,10 @@ class ConversionE2E(unittest.TestCase):
         raw_stderr = io.BytesIO()
         with io.TextIOWrapper(raw_stderr, encoding="utf-8", newline=newline) as stderr:
             with mock.patch.multiple(PREPARE.sys, stdout=stdout, stderr=stderr,
-                                     argv=[str(SCRIPT), self.fixture.name, "--target", target]):
-                code = PREPARE.main()
+                                     argv=[str(SCRIPT), self.fixture.name, "--target", target,
+                                           "--copilot-path", "/approved/copilot"]):
+                with mock.patch.object(PREPARE, "discover_models", return_value=CATALOG):
+                    code = PREPARE.main()
             stderr.flush()
             diagnostic = raw_stderr.getvalue()
         stdout.isatty.assert_not_called()
@@ -241,7 +255,7 @@ class ConversionE2E(unittest.TestCase):
             for source in case["sources"]:
                 self.assertTrue(inventory["sources"][source]["url"].startswith("https://"))
             for target in ("cli", "vscode"):
-                self.assertIn(set(case[target]), ({"model"}, {"reject"}))
+                self.assertIn(set(case[target]), ({"model"}, {"model", "substitution"}, {"reject"}))
                 self.assertIsInstance(next(iter(case[target].values())), str)
                 self.assertTrue(next(iter(case[target].values())).strip())
 
@@ -265,7 +279,12 @@ class ConversionE2E(unittest.TestCase):
                     else:
                         result = self.invoke(self.fixture.name, target)
                         self.assertEqual(result.returncode, 0, result.stderr)
-                        self.assertEqual(result.stderr, b"")
+                        if expected.get("substitution"):
+                            self.assertIn(b"model substitution:", result.stderr)
+                            self.assertIn(case["input"].encode(), result.stderr)
+                            self.assertIn(expected["model"].encode(), result.stderr)
+                        else:
+                            self.assertEqual(result.stderr, b"")
                         fields = yaml.safe_load(result.stdout.split(b"---\n")[1])
                         self.assertEqual(fields["model"], expected["model"])
                         self.assertEqual(body(result.stdout), body(original))
@@ -280,8 +299,8 @@ class ConversionE2E(unittest.TestCase):
                         mapped[target] += 1
         print(f"\nCLI matrix: {mapped['cli']} mapped; {rejected['cli']} expected rejection passes; {len(cases)} inputs", flush=True)
         print(f"VS Code native matrix: {mapped['vscode']} passthrough; {rejected['vscode']} expected rejection passes; {len(cases)} inputs", flush=True)
-        self.assertEqual(mapped, {"cli": 22, "vscode": 4})
-        self.assertEqual(rejected, {"cli": 29, "vscode": 47})
+        self.assertEqual(mapped, {"cli": 26, "vscode": 4})
+        self.assertEqual(rejected, {"cli": 25, "vscode": 47})
 
     def test_missing_fields(self):
         for line in VALID.splitlines(keepends=True):
@@ -437,7 +456,7 @@ class ConversionE2E(unittest.TestCase):
                 self.reject(b"---\n" + header + b"---\n")
 
     def test_unknown_models_and_no_general_normalization(self):
-        for model in (b"latest", b"Sonnet", b"claude-sonnet-5-6", b"claude-opus-4-8-fast",
+        for model in (b"latest", b"Sonnet", b"claude-opus-4-8-fast",
                       b"claude_opus_5_5", b" sonnet "):
             for target in ("cli", "vscode"):
                 self.reject(b"---\n" + VALID.replace(b"sonnet", b"'" + model + b"'") + b"---\n", target=target)

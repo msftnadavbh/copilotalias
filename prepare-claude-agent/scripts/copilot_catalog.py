@@ -1,0 +1,129 @@
+"""Read the authenticated Copilot catalog without creating an agent session."""
+
+import asyncio
+from contextlib import contextmanager
+import logging
+import os
+from pathlib import Path, PureWindowsPath
+import re
+import stat
+import tempfile
+
+
+DISCOVERY_TIMEOUT = 20
+CLEANUP_TIMEOUT = 5
+
+
+@contextmanager
+def _quiet_sdk_logging():
+    # The SDK logs raw startup exceptions before our boundary can sanitize them.
+    root = logging.getLogger("copilot")
+    loggers = [root]
+    for logger in loggers:
+        loggers.extend(logger.getChildren())
+    previous = [(logger, logger.disabled) for logger in loggers]
+    handlers, propagate = root.handlers, root.propagate
+    root.handlers, root.propagate = [logging.NullHandler()], False
+    for logger in loggers:
+        logger.disabled = True
+    try:
+        yield
+    finally:
+        root.handlers, root.propagate = handlers, propagate
+        for logger, disabled in previous:
+            logger.disabled = disabled
+
+
+def _enabled_ids(models):
+    if not isinstance(models, list) or not models or len(models) > 10000:
+        raise ValueError("Copilot catalog is empty or malformed")
+    identifiers = []
+    seen = set()
+    for model in models:
+        identifier = getattr(model, "id", None)
+        if (not isinstance(identifier, str)
+                or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:/-]{0,199}", identifier)
+                or identifier in seen):
+            raise ValueError("Copilot catalog has malformed or duplicate model IDs")
+        seen.add(identifier)
+        policy = getattr(model, "policy", None)
+        state = getattr(policy, "state", None)
+        if policy is not None and state not in ("enabled", "disabled", "unconfigured"):
+            raise ValueError("Copilot catalog has an unknown model policy")
+        # An advertised model without enabled policy is not proof of permission.
+        if state == "enabled":
+            identifiers.append(identifier)
+    if not identifiers:
+        raise ValueError("Copilot catalog has no policy-enabled models")
+    return identifiers
+
+
+async def _discover(client):
+    try:
+        try:
+            async with asyncio.timeout(DISCOVERY_TIMEOUT):
+                await client.start()
+                models = await client.list_models()
+        except TimeoutError:
+            raise ValueError("Copilot catalog discovery timed out; retry after checking the approved runtime") from None
+        except Exception:
+            raise ValueError("Copilot catalog discovery failed; check runtime compatibility, authentication and connectivity") from None
+        return _enabled_ids(models)
+    finally:
+        try:
+            await asyncio.wait_for(client.stop(), timeout=CLEANUP_TIMEOUT)
+        except Exception:
+            try:
+                await asyncio.wait_for(client.force_stop(), timeout=CLEANUP_TIMEOUT)
+            except Exception:
+                raise ValueError("Copilot catalog runtime cleanup failed; stop and inspect the runtime") from None
+
+
+def discover_models(cli_path):
+    """Return enabled IDs from a fresh approved CLI connection, never a stale cache."""
+    try:
+        path = Path(cli_path)
+        windows = PureWindowsPath(cli_path)
+        if (not path.is_absolute() or str(path).startswith(("\\", "//"))
+                or (windows.drive and (not re.fullmatch(r"[A-Za-z]:", windows.drive) or not windows.root))):
+            raise ValueError
+        for component in (*reversed(path.parents), path):
+            name = component.name
+            if (name in (".", "..") or name.rstrip(" .") != name
+                    or any(char in name for char in '\\/:<>"|?*')
+                    or re.match(r"(?:CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])(?:\.|$)", name, re.IGNORECASE)):
+                raise ValueError
+            info = component.lstat()
+            if stat.S_ISLNK(info.st_mode) or getattr(info, "st_file_attributes", 0) & stat.FILE_ATTRIBUTE_REPARSE_POINT:
+                raise ValueError
+            if component != path and not stat.S_ISDIR(info.st_mode):
+                raise ValueError
+        if (not stat.S_ISREG(info.st_mode) or not os.access(path, os.X_OK)
+                or (os.name == "nt" and path.suffix.lower() != ".exe")):
+            raise ValueError
+    except (OSError, TypeError, ValueError):
+        raise ValueError("choose an approved absolute local executable Copilot path (.exe on Windows)") from None
+    # shortcut: checks/launch can race; require private nonsynced local storage without hostile concurrent writers.
+    try:
+        from copilot import CopilotClient, RuntimeConnection
+    except Exception:
+        raise ValueError("an approved github-copilot-sdk 1.0.28 runtime is required for CLI discovery; contact IT") from None
+    try:
+        with _quiet_sdk_logging(), tempfile.TemporaryDirectory(prefix="copilotalias-catalog-") as directory:
+            try:
+                client = CopilotClient(
+                    connection=RuntimeConnection.for_stdio(path=str(path), args=(
+                        "--no-auto-update", "--no-custom-instructions", "--disable-builtin-mcps",
+                        "--no-bash-env", "--no-remote", "--log-dir", directory,
+                    )),
+                    working_directory=directory,
+                    log_level="none",
+                    env={**os.environ, "COPILOT_GITHUB_TELEMETRY_DISABLED": "true"},
+                )
+            except Exception:
+                raise ValueError("Copilot catalog discovery failed; check the approved SDK and runtime") from None
+            return asyncio.run(_discover(client))
+    except ValueError:
+        raise
+    except Exception:
+        raise ValueError("Copilot catalog discovery failed; check the approved SDK and runtime") from None
