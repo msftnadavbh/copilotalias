@@ -85,12 +85,25 @@ def discover_models(cli_path):
         path = Path(cli_path)
         windows = PureWindowsPath(cli_path)
         if (not path.is_absolute() or str(path).startswith(("\\", "//"))
-                or (windows.drive and (not re.fullmatch(r"[A-Za-z]:", windows.drive) or not windows.root))
-                or not stat.S_ISREG(path.stat().st_mode) or not os.access(path, os.X_OK)
+                or (windows.drive and (not re.fullmatch(r"[A-Za-z]:", windows.drive) or not windows.root))):
+            raise ValueError
+        for component in (*reversed(path.parents), path):
+            name = component.name
+            if (name in (".", "..") or name.rstrip(" .") != name
+                    or any(char in name for char in '\\/:<>"|?*')
+                    or re.match(r"(?:CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])(?:\.|$)", name, re.IGNORECASE)):
+                raise ValueError
+            info = component.lstat()
+            if stat.S_ISLNK(info.st_mode) or getattr(info, "st_file_attributes", 0) & stat.FILE_ATTRIBUTE_REPARSE_POINT:
+                raise ValueError
+            if component != path and not stat.S_ISDIR(info.st_mode):
+                raise ValueError
+        if (not stat.S_ISREG(info.st_mode) or not os.access(path, os.X_OK)
                 or (os.name == "nt" and path.suffix.lower() != ".exe")):
             raise ValueError
     except (OSError, TypeError, ValueError):
         raise ValueError("choose an approved absolute local executable Copilot path (.exe on Windows)") from None
+    # shortcut: checks/launch can race; require private nonsynced local storage without hostile concurrent writers.
     try:
         from copilot import CopilotClient, RuntimeConnection
     except Exception:
